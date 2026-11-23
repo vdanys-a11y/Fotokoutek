@@ -166,9 +166,17 @@ $('#plus').onclick = () => { people = Math.min(12, people + 1); $('#pc').textCon
 $('#clear').onclick = () => { sel.clear(); document.querySelectorAll('.t').forEach(b => b.setAttribute('aria-pressed', 'false')); updateBar(); };
 
 // zadání (oddíl E): celý text pod PROMPT NN + oddělené doplnění
-function buildPrompt(t, { people, wishes, fix }) {
+const CAP_Q = '„' + CAPTION + '“';
+function captionFixPrompt(t) {
+  return `Uprav POUZE popisek ve spodní ploše tohoto obrázku (šablona ${t.number}). Odstraň stávající text popisku a napiš na jeho místo přesně tento text: ${CAP_Q}\n` +
+    'Pravidla: zachovej všechna slova, českou diakritiku (é, á, ř, š, č) a datum 28.11.2026 se dvěma tečkami a bez mezer. Povoleny jsou jen řádkové zlomy po celých slovech. Písmo čitelné, kontrastní, bez ozdob, bez dalších nápisů, čísel nebo log.\n' +
+    'Vše ostatní ponech beze změny: tváře, osoby, scénu, rámeček, barvy, kompozici i pozadí spodní plochy.';
+}
+function buildPrompt(t, { people, wishes, fix, captionFix }) {
+  if (captionFix) return captionFixPrompt(t);
   let p = t.prompt;
   p += `\n\nDOPLNĚNÍ PRO TENTO POŽADAVEK: Na původní fotografii je ${people} ${people === 1 ? 'osoba' : people < 5 ? 'osoby' : 'osob'}. Zobraz přesně tento počet osob ve stejném pořadí; nevymýšlej jména ani přesný věk.`;
+  p += `\n\nKONTROLA POPISKU: Před dokončením zkontroluj popisek písmeno po písmenu: ${CAP_Q}. Slovo „Osmdesáté“ má na konci é s čárkou, „Střechové“ má ř s háčkem a datum „28.11.2026“ má dvě tečky. Žádná jiná interpunkce, žádné další znaky.`;
   if (wishes) p += `\n\nVÝSLOVNÉ ÚPRAVY UŽIVATELE (platí pouze v rámci vybrané šablony ${t.number}, nesmí změnit téma ani povinný popisek): ${wishes}`;
   if (fix) p += `\n\nCÍLENÁ OPRAVA (začni z původní fotografie, zachovej téma ${t.number}; oprav pouze toto): ${fix}`;
   return p;
@@ -184,7 +192,8 @@ async function generate(t, opts, photoData) {
   fd.append('quality', get('fk_q', 'medium'));
   fd.append('n', '1');
   if (!/gpt-image-2/.test(model)) fd.append('input_fidelity', 'high');
-  fd.append('image', await (await fetch(photoData)).blob(), 'original.jpg');
+  const src = await (await fetch(photoData)).blob();
+  fd.append('image', src, src.type.includes('png') ? 'image.png' : 'original.jpg');
   const r = await fetch('https://api.openai.com/v1/images/edits', { method: 'POST', headers: { Authorization: 'Bearer ' + key }, body: fd });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error?.message || 'API ' + r.status);
@@ -198,8 +207,9 @@ let chain = Promise.resolve();
 async function hold() { try { lock = await navigator.wakeLock?.request('screen'); } catch {} }
 function startJob(number, extra = {}) {
   const t = TEMPLATES.find(x => x.number === number);
-  const opts = { people, wishes: $('#wishes').value.trim(), ...extra };
-  const photoData = photo;
+  const { source, ...rest } = extra;
+  const opts = { people, wishes: $('#wishes').value.trim(), ...rest };
+  const photoData = extra.source || photo;
   $('#rh').hidden = false; $('#savehint').hidden = false;
   const card = document.createElement('div'); card.className = 'card';
   card.innerHTML = `<h3><b>${t.number}</b> – ${esc(t.name)}</h3><div class="prog"><i class="dot"></i><span>Čeká ve frontě…</span></div>`;
@@ -216,7 +226,7 @@ function startJob(number, extra = {}) {
 function done(card, t, url) {
   card.querySelector('.prog').outerHTML = `
     <div class="res"><img alt="Portrét ${t.number}" src="${url}"></div>
-    <div class="acts"><button class="save">Uložit do Fotek</button><button class="ghost fixtoggle">Opravit</button></div>
+    <div class="acts"><button class="save">Uložit do Fotek</button><button class="ghost capfix">Opravit popisek</button><button class="ghost fixtoggle">Opravit</button></div>
     <div class="fixbox"><textarea maxlength="400" placeholder="Co je špatně? Např. chyba v popisku, špatně napojená hlava, ztracená podoba…"></textarea><button class="fixgo">Spustit opravu (z původní fotky)</button></div>`;
   const fb = card.querySelector('.fixbox');
   card.querySelector('.save').onclick = async () => {
@@ -225,6 +235,7 @@ function done(card, t, url) {
     if (navigator.canShare?.({ files: [f] })) { try { await navigator.share({ files: [f] }); } catch {} }
     else { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = f.name; a.click(); }
   };
+  card.querySelector('.capfix').onclick = () => startJob(t.number, { captionFix: true, source: url });
   card.querySelector('.fixtoggle').onclick = () => fb.classList.toggle('on');
   card.querySelector('.fixgo').onclick = () => {
     const fix = fb.querySelector('textarea').value.trim();
@@ -235,6 +246,5 @@ function done(card, t, url) {
 
 $('#go').onclick = () => { [...sel].sort().forEach(n => startJob(n)); scrollTo({ top: $('#rh').offsetTop - 10, behavior: 'smooth' }); };
 </script>
-<script src="extras.js"></script>
 </body>
 </html>
